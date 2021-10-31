@@ -81,7 +81,7 @@ def remove_excess(line):
     line = re.sub("[:]{1}", "", line)
     return line.strip()
 
-def get_recipe_details(relative_url):
+def get_recipe_details(relative_url, expand_id):
     url = f"https://www.brewersfriend.com{relative_url}"
     response = cached_request(url, headers, {}, method=requests.get)
 
@@ -114,48 +114,76 @@ def get_recipe_details(relative_url):
         brewpart_id = match["id"]
 
         columns = []
-        row = []
-        for table in match.find_all("tr"):
-            if table.find("div", "brewpartlabel") is None:
-                continue
+        rows = []
+        for yeast_table in match.find_all("table", recursive=False):
+            
+            head = yeast_table.find("thead")
+            fill_columns = False
+            if len(columns) == 0:
+                fill_columns = True
+                columns.append("Name")
+            
+            row = [remove_excess(dig(head.find("span")))]
+            for table in yeast_table.find("table").find_all("tr"):
+                if table.find("div", "brewpartlabel") is None:
+                    continue
 
-            if table.find("tr") is not None:
-                continue
+                if table.find("tr") is not None:
+                    continue
 
-            for row_entry in table.find_all("td"):
-                if row_entry.find("div", "brewpartlabel") is not None:
-                    what = remove_excess(dig(row_entry.find("div", "brewpartlabel")))
-                    columns.append(what)
-                else:
-                    value = remove_excess(dig(row_entry))
-                    row.append(value)
+                for row_entry in table.find_all("td"):
+                    if row_entry.find("div", "brewpartlabel") is not None:
+                        what = remove_excess(dig(row_entry.find("div", "brewpartlabel")))
+                        if fill_columns:
+                            columns.append(what)
 
-        df = pd.DataFrame([row], columns=columns)    
+                        if what not in columns:
+                            sys.exit(1)
+                    else:
+                        value = remove_excess(dig(row_entry))
+                        row.append(value)
+            rows.append(row)
+        df = pd.DataFrame(rows, columns=columns)    
         tables[brewpart_id] = df
 
     columns = []
     row = []
     match = doc.find("div", {'class':'description'})
-    print(match.prettify())
     for item in match.find_all("span", {'class':'viewStats'}):
         key = remove_excess(dig(item.contents[1]))
         value = remove_excess(dig(item.contents[3]))
-        
-        if (len(item.contents) > 4):
-            print(item.contents)
-            value = value + " " + remove_excess(dig(item.contents[4]))
-            #TODO
-            
+
+        possible_span = item.find("span", {'class': None, 'itemprop': None})
+        possible_strong = item.find("strong")
+        if possible_span:
+            value = value + " " + remove_excess(dig(possible_span))
+        elif possible_strong and remove_excess(dig(possible_strong)) != value:
+            value = value + " " + remove_excess(dig(possible_strong))
+
         columns.append(key);
         row.append(value);
+    tables["description"] = pd.DataFrame([row], columns=columns)
 
-    print(columns)
-    print(row)
-    tables["description"] = pd.DataFrame(row, columns=columns)
-        
+    columns = []
+    row = []
+    match = doc.find("div", {'class':'viewrecipe'}).find("div")
+    for item in match.find_all("div", recursive=False):
+        stat_id = item["id"]
+        key = remove_excess(dig(item.find("label")))
+        value = remove_excess(dig(item.find("div")))
+
+        columns.append(key);
+        row.append(value);
+    tables["stats"] = pd.DataFrame([row], columns=columns)
     print(url)
     #print(doc.prettify())
-    print(tables)
+    #print(tables)
+
+    for key, table in tables.items():
+        table["expand_id"] = expand_id
+    for key, table in tables.items():
+        print(key)
+        print(table)
     sys.exit(1)
 
 
@@ -205,7 +233,7 @@ def store_data(page):
         expand_id = re.sub("[\t\s]+", " ", expand_id)
         href = re.sub("[\t\s]+", " ", href)
 
-        df_details = get_recipe_details(href)
+        df_details = get_recipe_details(href, expand_id)
     
         row.append(expand_id)
         row.append(href)
