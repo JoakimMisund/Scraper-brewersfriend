@@ -12,6 +12,52 @@ import random
 from collections import OrderedDict
 from pathlib import Path
 
+
+global_tables = {'fermentables': None,
+                 'hops': None,
+                 'water': None,
+                 'yeasts': None,
+                 'description': None,
+                 'stats': None}
+
+def load_global_tables():
+    for table_type in global_tables.keys():
+        filepath = Path(f"./data/{table_type}")
+        if not filepath.is_file():
+            continue
+        df = pd.read_csv(filepath)
+        global_tables[table_type] = df
+
+load_global_tables()
+
+def update_global_tables(data, expand_id):
+    print(f"Adding for {expand_id}")
+    for table_type, df in data.items():
+        if global_tables[table_type] is None:
+            global_tables[table_type] = df
+
+        table = global_tables[table_type]
+        table = table.drop(table[table['expand_id'] == expand_id].index)
+        global_tables[table_type] = table.append(df, ignore_index=True)
+def print_tables(tables):
+    for table_type, df in tables.items():
+        print(table_type)
+        print(df)
+def print_global_tables():
+    print_tables(global_tables)
+
+def store_global_tables():
+    for table_type, df in global_tables.items():
+        filepath = Path(f"./data/{table_type}")
+        df = df.to_csv(filepath, index=False)
+
+def get_recipe_information(expand_id):
+    data = {}
+    for table_type, df in global_tables.items():
+        data[table_type] = df[df['expand_id'] == expand_id]
+    return data
+
+
 cached_filename = "./cache/cache"
 cached_directory = "./cache"
 
@@ -63,6 +109,7 @@ data = {'keyword': '',
         'sort': '',
         'page': 2}
 
+# in structure
 def dig(content):
     if type(content) in [int, str]:
         return str(content)
@@ -77,6 +124,14 @@ def dig(content):
     return ""
 
 def remove_excess(line):
+
+    try:
+        if line.name == 'i':
+            line = line.contents[0]
+    except Exception as e:
+        pass
+
+    
     line = re.sub("[\t\s]+", " ", line)
     line = re.sub("[:]{1}", "", line)
     return line.strip()
@@ -87,12 +142,18 @@ def get_recipe_details(relative_url, expand_id):
 
     doc = BeautifulSoup(response.text, features="html.parser")
 
+    if "Permission Error" in str(doc):
+        return
+
     tables = {}
 
     for match in doc.find_all("div", {'class': "brewpart", "id": ["water", "hops", "fermentables"]}):
         brewpart_id = match["id"]
 
         match = match.find("table")
+
+#        if (brewpart_id == "hops"):
+#                print("------------",match,"------------")
         
         columns = []
         for col in match.find("tr").find_all("th"):
@@ -116,7 +177,6 @@ def get_recipe_details(relative_url, expand_id):
         columns = []
         rows = []
         for yeast_table in match.find_all("table", recursive=False):
-            
             head = yeast_table.find("thead")
             fill_columns = False
             if len(columns) == 0:
@@ -150,8 +210,11 @@ def get_recipe_details(relative_url, expand_id):
     row = []
     match = doc.find("div", {'class':'description'})
     for item in match.find_all("span", {'class':'viewStats'}):
-        key = remove_excess(dig(item.contents[1]))
-        value = remove_excess(dig(item.contents[3]))
+        key = remove_excess(dig(item.find("span", {'class':'firstLabel'})))
+        try:
+            value = remove_excess(dig(item.contents[3]))
+        except:
+            value = remove_excess(dig(item.contents[2]))
 
         possible_span = item.find("span", {'class': None, 'itemprop': None})
         possible_strong = item.find("strong")
@@ -181,10 +244,10 @@ def get_recipe_details(relative_url, expand_id):
 
     for key, table in tables.items():
         table["expand_id"] = expand_id
-    for key, table in tables.items():
-        print(key)
-        print(table)
-    sys.exit(1)
+    #for key, table in tables.items():
+    #    print(key)
+    #    print(table)
+    update_global_tables(tables, expand_id)
 
 
 def store_data(page):
@@ -272,10 +335,15 @@ def store_data(page):
     df.to_feather(f"./data/per-page/page_{data['page']}.feather")
     df.to_csv(f"./data/per-page/page_{data['page']}.csv")
 
-
+#print_global_tables()
+#sys.exit(1)
 nums = list(range(1, 4746))
 random.shuffle(nums)
-nums=[89]
+#nums=[2038, 1]
 for page in nums:
     print(page)
     store_data(page)
+    store_global_tables()
+#print_global_tables()
+#store_global_tables()
+#print_global_tables()
